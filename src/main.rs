@@ -266,8 +266,8 @@ fn cmd_recall(mut parser: lexopt::Parser) -> Result<i32> {
 
     let proj = resolve_project(false, project_opt.as_deref())?;
     let mems = store::load_project_and_global(&proj.slug)?;
-    if let Some(text) = recall::assemble(&proj.name, &mems, budget, sessions) {
-        print!("{text}");
+    if let Some(recall) = recall::assemble(&proj.name, &mems, budget, sessions) {
+        print!("{}", recall.text);
     }
     Ok(0)
 }

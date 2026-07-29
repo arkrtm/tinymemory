@@ -10,7 +10,7 @@
 
 - **Rustバイナリ1個(約1MB)+ プレーンなMarkdownファイル。** デーモンなし、DBなし、MCPサーバーなし、Webアプリなし、APIキーなし、埋め込みモデルなし。
 - **両エージェントで1つのストア。** Claude Code も Codex も同じ `~/.tinymemory` を読み書き。
-- **recallは全自動。** `SessionStart` フックが新しいセッション(`/clear` 直後を含む)にプロジェクトの記憶を自動注入。
+- **recallは全自動。** `SessionStart` フックが新しいセッション(`/clear` 直後を含む)にプロジェクトの記憶を自動注入。Claude Codeでは読み込み確認の1行(`tinymemory: loaded 2 facts + 1 session (project: myapp)`)が表示されるので、正常に読み込まれたことが目で確認できます。Codexではフック実行中に固定のステータス行(`Loading tinymemory`)が表示されます。
 - **データはあなたのもの。** 記憶はすべてfrontmatter付きMarkdownファイル。`cat` で読め、手で編集でき、grepでき、gitに入れられる。
 - **日本語検索に強い。** トークナイザなしの部分一致なので「人事」「経費」のような2文字語も正確にヒット。
 
@@ -51,7 +51,7 @@ Claude Code はプラグインとして入れることもできます:
 | セッション内 | 何が起きるか |
 |---|---|
 | `/remember`(Codex: `$remember`) | エージェントが構造化されたセッション要約を書き、`tinymemory save` で保存。 |
-| `/clear` | コンテキストがリセットされ、SessionStartフックが新セッションに記憶を自動注入。 |
+| `/clear` | コンテキストがリセットされ、SessionStartフックが新セッションに記憶を自動注入。Claude Codeでは `tinymemory: loaded …` の確認行が表示される。 |
 | `/recall`(Codex: `$recall`) | セッション途中での手動recall。 |
 | `/dream`(Codex: `$dream`) | 溜まった記憶をエージェントが整理: 重複factの統合、古い決定の更新、superseded削除、古いセッションのアーカイブ。 |
 

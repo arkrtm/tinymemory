@@ -8,6 +8,19 @@ const FACT_INDEX_MAX: usize = 15;
 const SESSION_BODY_CAP: usize = 1500;
 pub const OLDER_INDEX_MAX: usize = 10;
 
+/// An assembled recall block plus what went into it, so callers can report
+/// "loaded N facts + M sessions" without re-deriving the dedup.
+pub struct Recall {
+    pub text: String,
+    /// Distinct (newest-wins deduped) facts individually present in the block
+    /// — a rendered line or an index title. Entries summarized only by an
+    /// "…and N more" count are excluded: the confirmation message calls these
+    /// numbers "loaded", and those entries never reached the context.
+    pub facts: usize,
+    /// Distinct sessions individually present (bodies + older-index lines).
+    pub sessions: usize,
+}
+
 /// Assemble the budget-limited recall context block.
 ///
 /// Layout: header → facts (newest first, ≤40% of budget, overflow as titles) →
@@ -21,7 +34,7 @@ pub fn assemble(
     mems: &[Memory],
     budget: usize,
     max_sessions: usize,
-) -> Option<String> {
+) -> Option<Recall> {
     if mems.is_empty() {
         return None;
     }
@@ -53,6 +66,7 @@ pub fn assemble(
     ));
 
     // --- Facts ---
+    let mut hidden_facts = 0usize;
     if !facts.is_empty() {
         out.push_str("\n## Facts\n");
         let facts_cap = budget * 40 / 100;
@@ -82,9 +96,11 @@ pub fn assemble(
             listed += 1;
             out.push_str(&line);
         }
-        let hidden = overflow.len() - listed;
-        if hidden > 0 {
-            out.push_str(&format!("- …and {hidden} more facts (`tinymemory list`)\n"));
+        hidden_facts = overflow.len() - listed;
+        if hidden_facts > 0 {
+            out.push_str(&format!(
+                "- …and {hidden_facts} more facts (`tinymemory list`)\n"
+            ));
         }
     }
 
@@ -117,18 +133,25 @@ pub fn assemble(
     // Indexed from `shown`, not `n`: sessions whose body was dropped by the
     // budget must still appear here or they would vanish from the output
     // entirely (progressive-disclosure guarantee).
+    let mut hidden_sessions = 0usize;
     if sessions.len() > shown {
         out.push_str("\n## Older sessions\n");
         for s in sessions.iter().skip(shown).take(OLDER_INDEX_MAX) {
             out.push_str(&format!("- [{}] {} ({})\n", s.date(), s.title, s.id));
         }
-        let hidden = sessions.len().saturating_sub(shown + OLDER_INDEX_MAX);
-        if hidden > 0 {
-            out.push_str(&format!("- …and {hidden} more (`tinymemory list`)\n"));
+        hidden_sessions = sessions.len().saturating_sub(shown + OLDER_INDEX_MAX);
+        if hidden_sessions > 0 {
+            out.push_str(&format!(
+                "- …and {hidden_sessions} more (`tinymemory list`)\n"
+            ));
         }
     }
 
-    Some(out)
+    Some(Recall {
+        text: out,
+        facts: facts.len() - hidden_facts,
+        sessions: sessions.len() - hidden_sessions,
+    })
 }
 
 fn render_fact(f: &Memory) -> String {
@@ -207,7 +230,7 @@ mod tests {
             mem("s4", MemoryType::Session, "ancient", "body four", "2026-07-26T00:00:00Z"),
             mem("f1", MemoryType::Fact, "uses pnpm", "always pnpm, never npm", "2026-07-20T00:00:00Z"),
         ];
-        let out = assemble("proj", &mems, DEFAULT_BUDGET, 3).unwrap();
+        let out = assemble("proj", &mems, DEFAULT_BUDGET, 3).unwrap().text;
         let facts_pos = out.find("## Facts").unwrap();
         let recent_pos = out.find("## Recent sessions").unwrap();
         let older_pos = out.find("## Older sessions").unwrap();
@@ -225,7 +248,7 @@ mod tests {
             mem("new", MemoryType::Session, "auth work", "new body", "2026-07-29T00:00:00Z"),
             mem("old", MemoryType::Session, "auth work", "old body", "2026-07-01T00:00:00Z"),
         ];
-        let out = assemble("p", &mems, DEFAULT_BUDGET, 3).unwrap();
+        let out = assemble("p", &mems, DEFAULT_BUDGET, 3).unwrap().text;
         assert!(out.contains("new body"));
         assert!(!out.contains("old body"));
     }
@@ -238,7 +261,7 @@ mod tests {
             mem("old", MemoryType::Fact, "package manager", "use npm", "2026-01-01T00:00:00Z"),
             mem("new", MemoryType::Fact, "package manager", "use pnpm, never npm", "2026-07-29T00:00:00Z"),
         ];
-        let out = assemble("p", &mems, DEFAULT_BUDGET, 3).unwrap();
+        let out = assemble("p", &mems, DEFAULT_BUDGET, 3).unwrap().text;
         assert!(out.contains("use pnpm, never npm"));
         assert!(!out.contains("use npm\n") && !out.contains(": use npm"));
         // Different titles keep coexisting.
@@ -246,8 +269,71 @@ mod tests {
             mem("a", MemoryType::Fact, "package manager", "use pnpm", "2026-07-29T00:00:00Z"),
             mem("b", MemoryType::Fact, "test runner", "use vitest", "2026-01-01T00:00:00Z"),
         ];
-        let out2 = assemble("p", &mems2, DEFAULT_BUDGET, 3).unwrap();
+        let out2 = assemble("p", &mems2, DEFAULT_BUDGET, 3).unwrap().text;
         assert!(out2.contains("use pnpm") && out2.contains("use vitest"));
+    }
+
+    #[test]
+    fn counts_reflect_deduped_entries() {
+        // The hook's "loaded N facts + M sessions" message must count distinct
+        // titles (what recall actually represents), not raw files on disk.
+        let mems = vec![
+            mem("s1", MemoryType::Session, "auth work", "new body", "2026-07-29T00:00:00Z"),
+            mem("s2", MemoryType::Session, "auth work", "old body", "2026-07-01T00:00:00Z"),
+            mem("s3", MemoryType::Session, "other work", "body", "2026-07-02T00:00:00Z"),
+            mem("f1", MemoryType::Fact, "package manager", "pnpm", "2026-07-29T00:00:00Z"),
+            mem("f2", MemoryType::Fact, "package manager", "npm", "2026-01-01T00:00:00Z"),
+        ];
+        let r = assemble("p", &mems, DEFAULT_BUDGET, 3).unwrap();
+        assert_eq!(r.facts, 1);
+        assert_eq!(r.sessions, 2);
+    }
+
+    #[test]
+    fn counts_exclude_entries_hidden_behind_aggregate_lines() {
+        // 40 verbose facts on a tight budget: some exist in the block only as
+        // the "…and N more facts" total. Those were never injected, so the
+        // count the confirmation message reports must not include them.
+        let mems: Vec<Memory> = (0..40)
+            .map(|i| {
+                mem(
+                    &format!("f{i}"),
+                    MemoryType::Fact,
+                    &format!("fact number {i}"),
+                    &"detail ".repeat(60),
+                    &format!("2026-{:02}-01T00:00:00Z", (i % 12) + 1),
+                )
+            })
+            .collect();
+        let r = assemble("p", &mems, 4000, 3).unwrap();
+        assert!(r.facts < 40, "overflow must reduce the count, got {}", r.facts);
+        let excluded = 40 - r.facts;
+        assert!(
+            r.text.contains(&format!("…and {excluded} more facts")),
+            "count and hidden line must agree: facts={} in\n{}",
+            r.facts,
+            r.text
+        );
+    }
+
+    #[test]
+    fn session_count_excludes_beyond_index() {
+        // 20 sessions: 3 bodies + OLDER_INDEX_MAX index lines are present,
+        // the remaining 7 only as "…and 7 more".
+        let mems: Vec<Memory> = (0..20)
+            .map(|i| {
+                mem(
+                    &format!("s{i}"),
+                    MemoryType::Session,
+                    &format!("session {i}"),
+                    "short body",
+                    &format!("2026-01-{:02}T00:00:00Z", i + 1),
+                )
+            })
+            .collect();
+        let r = assemble("p", &mems, DEFAULT_BUDGET, 3).unwrap();
+        assert_eq!(r.sessions, 3 + OLDER_INDEX_MAX);
+        assert!(r.text.contains("…and 7 more"), "{}", r.text);
     }
 
     #[test]
@@ -264,7 +350,7 @@ mod tests {
                 )
             })
             .collect();
-        let out = assemble("p", &mems, 4000, 3).unwrap();
+        let out = assemble("p", &mems, 4000, 3).unwrap().text;
         // Header + index allowance: never balloon past budget + slack.
         assert!(out.chars().count() < 4000 + 1200, "len={}", out.chars().count());
         assert!(out.contains("…[truncated"));
@@ -279,7 +365,7 @@ mod tests {
             &"x".repeat(50_000),
             "2026-07-29T00:00:00Z",
         )];
-        let out = assemble("p", &mems, 2000, 3).unwrap();
+        let out = assemble("p", &mems, 2000, 3).unwrap().text;
         assert!(out.contains("### ["));
         assert!(out.contains("…[truncated"));
         assert!(out.chars().count() < 4000);
@@ -298,7 +384,7 @@ mod tests {
                 )
             })
             .collect();
-        let out = assemble("p", &mems, 4000, 3).unwrap();
+        let out = assemble("p", &mems, 4000, 3).unwrap().text;
         // Newest facts render, some overflow as title lines, the rest are counted.
         assert!(out.contains("more facts"), "hidden-count line present: {out}");
         assert!(
@@ -332,7 +418,7 @@ mod tests {
                 &format!("2026-07-{:02}T00:00:00Z", 20 + i),
             ));
         }
-        let out = assemble("p", &mems, DEFAULT_BUDGET, DEFAULT_SESSIONS).unwrap();
+        let out = assemble("p", &mems, DEFAULT_BUDGET, DEFAULT_SESSIONS).unwrap().text;
         let len = out.chars().count();
         assert!(len < 10_000, "must stay under Claude's cap, got {len}");
         assert!(len < DEFAULT_BUDGET + 1500, "roughly within budget, got {len}");
@@ -351,7 +437,7 @@ mod tests {
                 )
             })
             .collect();
-        let out = assemble("p", &mems, 700, 3).unwrap();
+        let out = assemble("p", &mems, 700, 3).unwrap().text;
         // Sessions whose body was dropped by the tight budget must still show
         // up in the Older index — nothing silently vanishes.
         for i in 0..5 {

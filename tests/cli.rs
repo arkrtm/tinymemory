@@ -31,12 +31,30 @@ struct Output {
 }
 
 fn run_in(home: &Path, cwd: &Path, args: &[&str], stdin: Option<&str>) -> Output {
+    run_in_env(home, cwd, args, stdin, &[])
+}
+
+fn run_in_env(
+    home: &Path,
+    cwd: &Path,
+    args: &[&str],
+    stdin: Option<&str>,
+    env: &[(&str, &str)],
+) -> Output {
     let mut cmd = Command::new(bin());
     cmd.args(args)
         .env("TINYMEMORY_HOME", home)
+        // The hook picks its output format from these; strip whatever the test
+        // runner's own environment carries (e.g. when developed inside Claude
+        // Code) so only the `env` parameter controls the outcome.
+        .env_remove("CLAUDECODE")
+        .env_remove("CLAUDE_PROJECT_DIR")
         .current_dir(cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     cmd.stdin(if stdin.is_some() {
         Stdio::piped()
     } else {
@@ -453,6 +471,178 @@ fn hook_uses_cwd_from_json_not_process_cwd() {
 
 fn json_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+#[test]
+fn hook_emits_json_confirmation_for_claude_code() {
+    let home = tmpdir("hook-json");
+    let project_dir = tmpdir("hook-json-proj");
+
+    let save = run_in(
+        &home,
+        &project_dir,
+        &["save", "--title", "deploy target", "--type", "fact"],
+        Some("deploys go to fly.io\n"),
+    );
+    assert_eq!(save.code, 0, "stderr: {}", save.stderr);
+    let save2 = run_in(
+        &home,
+        &project_dir,
+        &["save", "--title", "auth session work"],
+        Some("implemented login flow\n"),
+    );
+    assert_eq!(save2.code, 0, "stderr: {}", save2.stderr);
+
+    // Claude-shaped payload (no `model`) + Claude Code's env marker → JSON.
+    let claude_json = format!(
+        r#"{{"session_id":"abc","cwd":{},"hook_event_name":"SessionStart","source":"clear"}}"#,
+        json_string(project_dir.to_str().unwrap())
+    );
+    let hook = run_in_env(
+        &home,
+        &std::env::temp_dir(),
+        &["hook", "session-start"],
+        Some(&claude_json),
+        &[("CLAUDECODE", "1")],
+    );
+    assert_eq!(hook.code, 0);
+    let v: serde_json::Value = serde_json::from_str(&hook.stdout)
+        .unwrap_or_else(|e| panic!("stdout must be a single JSON object ({e}): {}", hook.stdout));
+    let msg = v["systemMessage"].as_str().expect("systemMessage present");
+    assert!(msg.contains("tinymemory: loaded"), "{msg}");
+    assert!(msg.contains("1 fact") && msg.contains("1 session"), "{msg}");
+    assert_eq!(v["hookSpecificOutput"]["hookEventName"], "SessionStart");
+    let ctx = v["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .expect("additionalContext present");
+    assert!(ctx.contains("deploy target") && ctx.contains("auth session work"), "{ctx}");
+
+    // Fresh `claude` launch: source=startup DOES carry a model id (only
+    // clear/resume omit it) — the confirmation must fire there too.
+    let startup_json = format!(
+        r#"{{"session_id":"abc","cwd":{},"hook_event_name":"SessionStart","source":"startup","model":"claude-opus-4-6"}}"#,
+        json_string(project_dir.to_str().unwrap())
+    );
+    let hook2 = run_in_env(
+        &home,
+        &std::env::temp_dir(),
+        &["hook", "session-start"],
+        Some(&startup_json),
+        &[("CLAUDECODE", "1")],
+    );
+    let v2: serde_json::Value = serde_json::from_str(&hook2.stdout)
+        .unwrap_or_else(|e| panic!("startup must also emit JSON ({e}): {}", hook2.stdout));
+    assert!(v2["systemMessage"].as_str().unwrap().contains("tinymemory: loaded"));
+
+    // Bedrock/Vertex-style model ids don't start with "claude-".
+    let bedrock_json = format!(
+        r#"{{"cwd":{},"hook_event_name":"SessionStart","source":"startup","model":"us.anthropic.claude-sonnet-4-5"}}"#,
+        json_string(project_dir.to_str().unwrap())
+    );
+    let hook3 = run_in_env(
+        &home,
+        &std::env::temp_dir(),
+        &["hook", "session-start"],
+        Some(&bedrock_json),
+        &[("CLAUDECODE", "1")],
+    );
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&hook3.stdout).is_ok(),
+        "bedrock model id must still be detected as Claude: {}",
+        hook3.stdout
+    );
+}
+
+#[test]
+fn hook_stays_plain_for_codex_payload_even_under_claude_env() {
+    let home = tmpdir("hook-codex-plain");
+    let project_dir = tmpdir("hook-codex-proj");
+
+    let save = run_in(
+        &home,
+        &project_dir,
+        &["save", "--title", "codex memory", "--type", "fact"],
+        Some("plain body\n"),
+    );
+    assert_eq!(save.code, 0, "stderr: {}", save.stderr);
+
+    // Codex payload always carries `model`. Even with CLAUDECODE inherited
+    // (codex launched from a Claude Code terminal), Codex must get plain
+    // markdown — `{`-prefixed stdout it cannot schema-parse fails the whole
+    // hook on its side and no memory would be injected.
+    let codex_json = format!(
+        r#"{{"session_id":"x","cwd":{},"source":"startup","hook_event_name":"SessionStart","model":"gpt-5","permission_mode":"default"}}"#,
+        json_string(project_dir.to_str().unwrap())
+    );
+    let hook = run_in_env(
+        &home,
+        &std::env::temp_dir(),
+        &["hook", "session-start"],
+        Some(&codex_json),
+        &[("CLAUDECODE", "1")],
+    );
+    assert_eq!(hook.code, 0);
+    assert!(
+        hook.stdout.starts_with("# tinymemory"),
+        "must stay plain markdown: {}",
+        hook.stdout
+    );
+    assert!(hook.stdout.contains("codex memory"));
+
+    // An explicit `"model": null` is presence, not absence — it must not be
+    // mistaken for Claude Code's clear/resume shape (which omits the field):
+    // JSON reaching Codex hard-fails its whole hook.
+    let null_model_json = format!(
+        r#"{{"session_id":"x","cwd":{},"source":"startup","hook_event_name":"SessionStart","model":null}}"#,
+        json_string(project_dir.to_str().unwrap())
+    );
+    let hook2 = run_in_env(
+        &home,
+        &std::env::temp_dir(),
+        &["hook", "session-start"],
+        Some(&null_model_json),
+        &[("CLAUDECODE", "1")],
+    );
+    assert_eq!(hook2.code, 0);
+    assert!(
+        hook2.stdout.starts_with("# tinymemory"),
+        "null model must stay plain: {}",
+        hook2.stdout
+    );
+}
+
+#[test]
+fn hook_stays_plain_without_claude_env_marker() {
+    let home = tmpdir("hook-noenv");
+    let project_dir = tmpdir("hook-noenv-proj");
+
+    let save = run_in(
+        &home,
+        &project_dir,
+        &["save", "--title", "some memory", "--type", "fact"],
+        Some("body\n"),
+    );
+    assert_eq!(save.code, 0, "stderr: {}", save.stderr);
+
+    // Claude-shaped payload but no CLAUDECODE/CLAUDE_PROJECT_DIR in the env
+    // (unknown caller): default to plain text, the format every consumer of
+    // the old contract understands.
+    let claude_json = format!(
+        r#"{{"session_id":"abc","cwd":{},"hook_event_name":"SessionStart","source":"startup"}}"#,
+        json_string(project_dir.to_str().unwrap())
+    );
+    let hook = run_in(
+        &home,
+        &std::env::temp_dir(),
+        &["hook", "session-start"],
+        Some(&claude_json),
+    );
+    assert_eq!(hook.code, 0);
+    assert!(
+        hook.stdout.starts_with("# tinymemory"),
+        "must stay plain markdown: {}",
+        hook.stdout
+    );
 }
 
 #[test]

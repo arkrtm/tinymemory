@@ -10,7 +10,7 @@ Tiny, fast, local long-term memory for coding agents — one shared store for **
 
 - **One Rust binary (~1 MB), plain Markdown files.** No daemon, no database, no MCP server, no web app, no API keys, no embeddings.
 - **Both agents, one store.** Claude Code and Codex read and write the same `~/.tinymemory` directory.
-- **Recall is automatic.** A `SessionStart` hook injects your project's memory into every new session — including right after `/clear`.
+- **Recall is automatic.** A `SessionStart` hook injects your project's memory into every new session — including right after `/clear`. In Claude Code a one-line confirmation — `tinymemory: loaded 2 facts + 1 session (project: myapp)` — is shown so you can see it worked; in Codex a static `Loading tinymemory` status line is shown while the hook runs.
 - **Human-owned data.** Every memory is a Markdown file with frontmatter. `cat` it, edit it, grep it, put it in git.
 - **Japanese-friendly search.** Substring matching with no tokenizer, so short CJK words (「人事」「経費」) hit exactly.
 
@@ -51,7 +51,7 @@ Claude Code users can install the skills/hooks as a plugin instead:
 | In the session | What happens |
 |---|---|
 | `/remember` (Codex: `$remember`) | The agent writes a structured session summary and saves it with `tinymemory save`. |
-| `/clear` | Context resets — and the SessionStart hook auto-injects your memories into the fresh session. |
+| `/clear` | Context resets — the SessionStart hook auto-injects your memories into the fresh session and (Claude Code) shows a `tinymemory: loaded …` confirmation. |
 | `/recall` (Codex: `$recall`) | Manual recall mid-session. |
 | `/dream` (Codex: `$dream`) | The agent consolidates accumulated memory: merges overlapping facts, updates outdated decisions, prunes superseded entries, archives old sessions. |
 
