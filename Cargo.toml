@@ -1,0 +1,25 @@
+[package]
+name = "tinymemory"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Tiny, fast, local long-term memory for coding agents (Claude Code & Codex CLI). One binary, plain Markdown files, no daemon."
+license = "MIT"
+repository = "https://github.com/arkrtm/tinymemory"
+keywords = ["memory", "claude-code", "codex", "agent", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+# plugin/skills/** and plugin/hooks/** MUST ship in the crate: install.rs embeds
+# them via include_str! and the packaged source cannot compile without them.
+exclude = [".claude-plugin/", ".github/", "plugin/.claude-plugin/", "plugin/.codex-plugin/"]
+
+[dependencies]
+anyhow = "1"
+jiff = "0.2"
+lexopt = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

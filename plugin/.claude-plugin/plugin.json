@@ -1,0 +1,8 @@
+{
+  "name": "tinymemory",
+  "version": "0.1.0",
+  "description": "Tiny, fast, local long-term memory shared between Claude Code and Codex CLI. The remember skill saves a session summary; memories auto-load after /clear. One Rust binary + plain Markdown files — no daemon, no DB, no API keys.",
+  "author": {
+    "name": "arkrtm"
+  }
+}

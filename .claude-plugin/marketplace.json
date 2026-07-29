@@ -1,0 +1,14 @@
+{
+  "name": "tinymemory",
+  "owner": {
+    "name": "arkrtm"
+  },
+  "plugins": [
+    {
+      "name": "tinymemory",
+      "source": "./plugin",
+      "description": "Tiny, fast, local long-term memory shared between Claude Code and Codex CLI. The remember skill saves a session summary; memories auto-load after /clear.",
+      "version": "0.1.0"
+    }
+  ]
+}

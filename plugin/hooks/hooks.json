@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'PATH=\"$PATH:$HOME/.local/bin:$HOME/.cargo/bin\"; command -v tinymemory >/dev/null 2>&1 && exec tinymemory hook session-start; exit 0'"
+          }
+        ]
+      }
+    ]
+  }
+}
