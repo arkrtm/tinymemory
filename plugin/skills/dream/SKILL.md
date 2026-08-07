@@ -13,7 +13,7 @@ Phase 2 — Consolidate facts:
 - Aging facts: check each against the current code. Still true → leave it. Outdated → re-save with the EXACT same title (newest wins in recall). Wrong or irrelevant → `tinymemory delete <id>`.
 - Overlapping facts on the same topic under different titles: merge them into ONE fact (pick the best title, re-save it), then delete the others.
 
-Phase 3 — Distill old sessions: for each session beyond the recall index, `tinymemory show <id>` and extract any still-relevant durable knowledge into facts (Phase 2 rules), then `tinymemory archive <id>`.
+Phase 3 — Distill old sessions: for each session beyond the recall index, `tinymemory show <id>` and extract any still-relevant durable knowledge into facts (Phase 2 rules), then `tinymemory archive <id>`. If a summary seems thin, the show output's Origin footer may point at the raw transcript — grep it for details worth distilling before archiving.
 
 Phase 4 — Report: tell the user what was merged, updated, deleted, and archived, with counts, and run `tinymemory dream` once more to confirm the store is tidy.
 

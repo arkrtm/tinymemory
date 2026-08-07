@@ -45,16 +45,16 @@ pub fn debt(mems: &[Memory]) -> Debt {
 /// The mechanical dream report: the agent reads this and does the semantic
 /// work (merge/update/delete/archive) — the binary only finds the candidates.
 pub fn report(project_name: &str, mems: &[Memory], now: Timestamp) -> String {
-    let newest_first = |a: &&Memory, b: &&Memory| {
-        b.created
-            .cmp(&a.created)
-            .then_with(|| b.id.cmp(&a.id))
-    };
+    let newest_first =
+        |a: &&Memory, b: &&Memory| b.created.cmp(&a.created).then_with(|| b.id.cmp(&a.id));
 
     // Group by (type, title); newest entry per group survives recall.
     let mut groups: HashMap<(MemoryType, &str), Vec<&Memory>> = HashMap::new();
     for m in mems {
-        groups.entry((m.mtype, m.title.as_str())).or_default().push(m);
+        groups
+            .entry((m.mtype, m.title.as_str()))
+            .or_default()
+            .push(m);
     }
     let mut superseded: Vec<(&Memory, &Memory)> = Vec::new(); // (old, newest)
     for group in groups.values_mut() {
@@ -90,7 +90,10 @@ pub fn report(project_name: &str, mems: &[Memory], now: Timestamp) -> String {
     aging.sort_by(|a, b| a.created.cmp(&b.created)); // oldest first: most suspect
 
     let facts_total = mems.iter().filter(|m| m.mtype == MemoryType::Fact).count();
-    let sessions_total = mems.iter().filter(|m| m.mtype == MemoryType::Session).count();
+    let sessions_total = mems
+        .iter()
+        .filter(|m| m.mtype == MemoryType::Session)
+        .count();
     let chars_total: usize = mems.iter().map(|m| m.body.chars().count()).sum();
 
     let mut out = String::new();
@@ -118,7 +121,9 @@ pub fn report(project_name: &str, mems: &[Memory], now: Timestamp) -> String {
     }
 
     if !beyond_index.is_empty() {
-        out.push_str("\n## Sessions beyond the recall index (distill durable facts, then archive)\n");
+        out.push_str(
+            "\n## Sessions beyond the recall index (distill durable facts, then archive)\n",
+        );
         for s in &beyond_index {
             out.push_str(&format!("- [{}] {} ({})\n", s.date(), s.title, s.id));
         }
@@ -157,6 +162,8 @@ mod tests {
             created: created.parse().unwrap(),
             created_raw: created.into(),
             source: None,
+            session: None,
+            transcript: None,
             body: "body\n".into(),
             path: None,
         }
@@ -179,7 +186,10 @@ mod tests {
         }
         let d = debt(&mems);
         assert_eq!(d.superseded, 2);
-        assert_eq!(d.beyond_index, 20 - (recall::DEFAULT_SESSIONS + recall::OLDER_INDEX_MAX));
+        assert_eq!(
+            d.beyond_index,
+            20 - (recall::DEFAULT_SESSIONS + recall::OLDER_INDEX_MAX)
+        );
         assert!(d.is_due());
 
         let tidy = debt(&[mem("a", MemoryType::Fact, "x", "2026-01-01T00:00:00Z")]);
@@ -189,17 +199,29 @@ mod tests {
     #[test]
     fn report_tidy_and_sections() {
         let now: Timestamp = "2026-07-29T00:00:00Z".parse().unwrap();
-        let tidy = report("p", &[mem("a", MemoryType::Fact, "fresh", "2026-07-01T00:00:00Z")], now);
+        let tidy = report(
+            "p",
+            &[mem("a", MemoryType::Fact, "fresh", "2026-07-01T00:00:00Z")],
+            now,
+        );
         assert!(tidy.contains("tidy"));
 
         let mems = vec![
             mem("old", MemoryType::Fact, "pkg", "2026-01-01T00:00:00Z"),
             mem("new", MemoryType::Fact, "pkg", "2026-07-01T00:00:00Z"),
-            mem("ancient", MemoryType::Fact, "very old decision", "2025-01-01T00:00:00Z"),
+            mem(
+                "ancient",
+                MemoryType::Fact,
+                "very old decision",
+                "2025-01-01T00:00:00Z",
+            ),
         ];
         let r = report("p", &mems, now);
         assert!(r.contains("(old) → superseded by new"), "{r}");
-        assert!(r.contains("very old decision (ancient)"), "aging section: {r}");
+        assert!(
+            r.contains("very old decision (ancient)"),
+            "aging section: {r}"
+        );
         // The newest of a superseded chain is not itself listed as aging/superseded.
         assert!(!r.contains("(new) → superseded"));
     }

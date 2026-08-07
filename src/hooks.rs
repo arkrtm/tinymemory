@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Deserializer};
 
-use crate::{dream, project, recall, store};
+use crate::{dream, project, recall, session, store};
 
 /// Lenient superset of the SessionStart hook stdin JSON of both CLIs.
 /// Claude Code and Codex send the same core fields; everything is optional so
@@ -101,16 +101,40 @@ fn read_stdin_input() -> HookStdin {
 /// hook must never inject noise — a malformed payload must NOT fall back to
 /// the process cwd, which could inject the wrong project's memories.
 pub fn session_start() {
-    let (cwd, format) = match read_stdin_input() {
-        HookStdin::Tty => (std::env::current_dir().ok(), OutputFormat::Plain),
+    let (cwd, format, provenance) = match read_stdin_input() {
+        HookStdin::Tty => (std::env::current_dir().ok(), OutputFormat::Plain, None),
         HookStdin::Invalid => return,
         HookStdin::Parsed(input) => {
             let format = detect_format(&input);
-            (input.cwd.map(PathBuf::from).filter(|p| p.is_dir()), format)
+            let provenance = input
+                .session_id
+                .clone()
+                .map(|sid| (sid, input.transcript_path.clone()));
+            (
+                input.cwd.map(PathBuf::from).filter(|p| p.is_dir()),
+                format,
+                provenance,
+            )
         }
     };
     let Some(cwd) = cwd else { return };
     let proj = project::resolve(&cwd, None);
+    // Record which session is running (best-effort): `save` reads this to
+    // stamp `session:`/`transcript:` pointers into memories. Before the
+    // empty-store return below — the very first /remember in a project needs
+    // the pointer too.
+    if let Some((session_id, transcript_path)) = provenance {
+        session::record(&session::SessionState {
+            session_id,
+            transcript_path,
+            slug: proj.slug.clone(),
+            cli: match format {
+                OutputFormat::ClaudeJson => "claude",
+                OutputFormat::Plain => "other",
+            }
+            .to_string(),
+        });
+    }
     let Ok(mems) = store::load_project_and_global(&proj.slug) else {
         return;
     };
@@ -154,9 +178,7 @@ pub fn session_start() {
 /// The one-line load confirmation Claude Code shows the user, e.g.
 /// "tinymemory: loaded 2 facts + 1 session (project: tinymemory)".
 fn load_message(project_name: &str, recall: &recall::Recall, dream_due: bool) -> String {
-    let plural = |n: usize, word: &str| {
-        format!("{n} {word}{}", if n == 1 { "" } else { "s" })
-    };
+    let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
     let mut parts = Vec::new();
     if recall.facts > 0 {
         parts.push(plural(recall.facts, "fact"));

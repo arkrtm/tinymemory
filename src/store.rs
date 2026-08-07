@@ -187,7 +187,14 @@ fn parse_files(paths: Vec<PathBuf>) -> Vec<Memory> {
     std::thread::scope(|scope| {
         let handles: Vec<_> = paths
             .chunks(chunk)
-            .map(|chunk| scope.spawn(move || chunk.iter().filter_map(|p| parse_one(p)).collect::<Vec<_>>()))
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .filter_map(|p| parse_one(p))
+                        .collect::<Vec<_>>()
+                })
+            })
             .collect();
         for h in handles {
             if let Ok(mut v) = h.join() {

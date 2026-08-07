@@ -36,6 +36,11 @@ pub struct Memory {
     /// The exact string stored in the `created:` field (preserved for display).
     pub created_raw: String,
     pub source: Option<String>,
+    /// Opaque provenance pointers to the CLI session that produced this
+    /// memory (id + transcript path). Recorded at save time when the CLI
+    /// reveals them; never interpreted — the binary does not read transcripts.
+    pub session: Option<String>,
+    pub transcript: Option<String>,
     pub body: String,
     pub path: Option<PathBuf>,
 }
@@ -65,6 +70,12 @@ impl Memory {
         out.push_str(&format!("created: {}\n", self.created_raw));
         if let Some(s) = &self.source {
             out.push_str(&format!("source: {}\n", yaml_scalar(s)));
+        }
+        if let Some(s) = &self.session {
+            out.push_str(&format!("session: {}\n", yaml_scalar(s)));
+        }
+        if let Some(t) = &self.transcript {
+            out.push_str(&format!("transcript: {}\n", yaml_scalar(t)));
         }
         out.push_str("---\n\n");
         out.push_str(&self.body);
@@ -106,7 +117,10 @@ impl Memory {
         let body_start = body_start?;
         let mut body = &rest[body_start..];
         // Strip at most one leading blank line (the one serialize() writes).
-        if let Some(b) = body.strip_prefix("\r\n").or_else(|| body.strip_prefix('\n')) {
+        if let Some(b) = body
+            .strip_prefix("\r\n")
+            .or_else(|| body.strip_prefix('\n'))
+        {
             body = b;
         }
 
@@ -119,6 +133,8 @@ impl Memory {
             created: fallback_created,
             created_raw: String::new(),
             source: None,
+            session: None,
+            transcript: None,
             body: body.to_string(),
             path: None,
         };
@@ -154,6 +170,18 @@ impl Memory {
                     let v = unquote(value);
                     if !v.is_empty() {
                         mem.source = Some(v);
+                    }
+                }
+                "session" => {
+                    let v = unquote(value);
+                    if !v.is_empty() {
+                        mem.session = Some(v);
+                    }
+                }
+                "transcript" => {
+                    let v = unquote(value);
+                    if !v.is_empty() {
+                        mem.transcript = Some(v);
                     }
                 }
                 _ => {} // unknown keys: forward compatibility
@@ -249,6 +277,8 @@ mod tests {
             created: ts("2026-07-29T06:30:00Z"),
             created_raw: "2026-07-29T15:30:00+09:00".into(),
             source: Some("claude-code".into()),
+            session: Some("17f4997a-b401-4b99-831c-df4ceb778377".into()),
+            transcript: Some("/Users/u/.claude/projects/-Users-u-app/17f4997a.jsonl".into()),
             body: "JWTからセッションcookieに移行。\n\n次: テスト追加\n".into(),
             path: None,
         }
@@ -265,7 +295,25 @@ mod tests {
         assert_eq!(back.tags, mem.tags);
         assert_eq!(back.created, ts("2026-07-29T06:30:00Z"));
         assert_eq!(back.source, mem.source);
+        assert_eq!(back.session, mem.session);
+        assert_eq!(back.transcript, mem.transcript);
         assert_eq!(back.body, mem.body);
+    }
+
+    #[test]
+    fn provenance_is_optional_and_paths_with_spaces_roundtrip() {
+        let mut mem = sample();
+        mem.session = None;
+        mem.transcript = None;
+        let text = mem.serialize();
+        assert!(!text.contains("session:") && !text.contains("transcript:"));
+        let back = roundtrip(&mem);
+        assert!(back.session.is_none() && back.transcript.is_none());
+
+        let mut mem = sample();
+        mem.transcript = Some("/Users/u/My Projects/app dir/rollout: 1.jsonl".into());
+        let back = roundtrip(&mem);
+        assert_eq!(back.transcript, mem.transcript);
     }
 
     #[test]
@@ -284,7 +332,11 @@ mod tests {
             let mut mem = sample();
             mem.title = title.to_string();
             let back = roundtrip(&mem);
-            let expected = if title.is_empty() { "(untitled)" } else { title };
+            let expected = if title.is_empty() {
+                "(untitled)"
+            } else {
+                title
+            };
             assert_eq!(back.title, expected, "title round-trip failed: {title:?}");
         }
     }
@@ -299,7 +351,9 @@ mod tests {
 
     #[test]
     fn torn_file_is_skipped() {
-        assert!(Memory::parse("---\nid: x\nno closing fence", ts("2000-01-01T00:00:00Z")).is_none());
+        assert!(
+            Memory::parse("---\nid: x\nno closing fence", ts("2000-01-01T00:00:00Z")).is_none()
+        );
         assert!(Memory::parse("not frontmatter", ts("2000-01-01T00:00:00Z")).is_none());
         assert!(Memory::parse("", ts("2000-01-01T00:00:00Z")).is_none());
     }

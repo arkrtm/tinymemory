@@ -82,7 +82,7 @@ tinymemory init [claude|codex|all] / doctor
 └── _global/                          # ユーザー全体のfactと好み
 ```
 
-各記憶はfrontmatter付きMarkdown(`id`, `type: session|fact`, `title`, `tags`, `created`)。種類は2つだけ:
+各記憶はfrontmatter付きMarkdown(`id`, `type: session|fact`, `title`, `tags`, `created`, `source`、加えてCLIが開示した場合のみ来歴ポインタ `session` / `transcript`)。種類は2つだけ:
 
 - **session** — 何をしたか、決定事項、現在の状態、次のステップ(`/remember` 時にエージェントが記述)
 - **fact** — 永続的な知識: ビルドコマンド、不変条件、好み(ユーザー全体なら `--global`)
@@ -91,11 +91,13 @@ tinymemory init [claude|codex|all] / doctor
 
 `recall` は予算制限付きブロックを組み立てます: fact全件 → 直近セッション要約3件 → それより古いセッションの1行インデックス。深掘りはエージェントが `tinymemory search` / `tinymemory show <id>` で行えます。
 
+**来歴(Provenance)。** 要約は本質的に非可逆圧縮です — 正確なコマンド、正確なエラー文、逐語的な依頼内容はCLI自身のセッショントランスクリプトにしか残りません。そこで保存時に、CLIが開示している場合に限り**その記憶を生んだセッション**を記録します: CLIが既に公開しているセッションIDとトランスクリプトのパス(Claude Codeは環境変数とSessionStartフックから、Codexはフックのみから)を、不透明なfrontmatterポインタとしてそのまま書くだけです。`tinymemory show <id>` はこれをOriginフッターに展開し、そのまま実行できる再開コマンド(`claude --resume <id>` / `codex resume <id>`)とトランスクリプトがまだディスク上にあるかを表示します — 正確な文字列が必要なエージェントは推測せずに生ログへ戻れます。Claude Code側のリンクは正確です。Codex側は「プロジェクト内で最も新しく開始されたセッション」というベストエフォートの推定なので、同一プロジェクトの並行セッション(worktreeはプロジェクトを共有します)では稀に隣のセッションを指すことがあります。バイナリはトランスクリプトを開くことも解析することも決してありません。ポインタが切れていても、CLIが掃除しただけです。Claude Codeはデフォルト30日で削除します — `tinymemory doctor` が警告するので、生の履歴を長く残したい場合は `~/.claude/settings.json` の `cleanupPeriodDays` を上げてください。(ポインタの配管は `~/.tinymemory` 内の小さな `state/sessions/*.json` に置かれ、7日で自動削除されます — 記憶ではなく作業用ステートです。)
+
 ## 設計上の制約(このツールがやらないこと)
 
 - バックグラウンドプロセス・ポート・`~/.tinymemory` 以外の状態を持たない
 - LLM API呼び出しをしない — 要約はセッション内のエージェントが書く
-- トランスクリプトを解析しない — 両CLIともセッションファイルは内部フォーマットと明言している
+- トランスクリプトを解析しない — 両CLIともセッションファイルは内部フォーマットと明言している。記憶がトランスクリプトを**指す**ことはある(保存時にIDとパスを記録)が、バイナリが中身を開くことは決してない
 - ベクタ検索をしない — 記憶の規模(数千件)ではMarkdownのスコア付き部分一致スキャンが数msで完了し、短い日本語語彙ではtrigramインデックスより正確
 
 Claude Code の auto-memory や Codex のネイティブmemoriesはツール単位の記憶です。tinymemoryのニッチは**共有された透明な**ストア: 両エージェントが読み書きする1組のファイルで、人間が確認・編集できることです。

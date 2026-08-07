@@ -5,6 +5,7 @@ mod memory;
 mod project;
 mod recall;
 mod search;
+mod session;
 mod store;
 
 use std::io::{IsTerminal, Read};
@@ -36,7 +37,7 @@ COMMANDS:
                 <query...>  --limit <N=10>  --project <P>  --global  --json
     list      List memories for the current project (+ global)
                 --project <P>  --global  --json
-    show      Print a memory file by id
+    show      Print a memory file by id (+ an Origin provenance footer when known)
     delete    Delete a memory by id
     archive   Move a memory into the project's archive/ dir (out of recall/search; reversible)
     dream     Print a consolidation report: superseded entries, unindexed old
@@ -188,7 +189,10 @@ fn cmd_save(mut parser: lexopt::Parser) -> Result<i32> {
                 bail!("no input: pipe the body on stdin or pass --message");
             }
             let mut buf = String::new();
-            stdin.lock().read_to_string(&mut buf).context("reading stdin")?;
+            stdin
+                .lock()
+                .read_to_string(&mut buf)
+                .context("reading stdin")?;
             buf
         }
     };
@@ -197,6 +201,20 @@ fn cmd_save(mut parser: lexopt::Parser) -> Result<i32> {
     }
 
     let proj = resolve_project(global, project_opt.as_deref())?;
+    let source = sniff_source();
+    // Provenance lookup keys on the project of the *cwd* (what the hook
+    // recorded), not on where the memory is filed — a --global or --project
+    // save still originates from the session running here.
+    let link = {
+        let cwd_slug = if !global && project_opt.is_none() {
+            Some(proj.slug.clone())
+        } else {
+            std::env::current_dir()
+                .ok()
+                .map(|cwd| project::resolve(&cwd, None).slug)
+        };
+        session::resolve(source.as_deref(), cwd_slug.as_deref())
+    };
     let now = jiff::Zoned::now();
     let mut mem = Memory {
         id: String::new(),
@@ -213,13 +231,20 @@ fn cmd_save(mut parser: lexopt::Parser) -> Result<i32> {
         // normal agent flow) must still order deterministically, or the
         // newest-wins dedup in recall could pick the older entry.
         created_raw: now.strftime("%Y-%m-%dT%H:%M:%S%.6f%:z").to_string(),
-        source: sniff_source(),
+        source,
+        session: link.session,
+        transcript: link.transcript,
         body,
         path: None,
     };
 
     match store::save(&mut mem, &proj.slug)? {
-        store::SaveOutcome::Saved { id, path, superseded, debt } => {
+        store::SaveOutcome::Saved {
+            id,
+            path,
+            superseded,
+            debt,
+        } => {
             println!(
                 "Saved {id} ({}, project: {}) → {}",
                 mem.mtype.as_str(),
@@ -404,11 +429,55 @@ fn cmd_show(parser: lexopt::Parser) -> Result<i32> {
     let id = positional(parser, "memory id")?;
     match store::find_by_id(&id)? {
         Some(mem) => {
-            let path = mem.path.expect("loaded memory has a path");
-            print!("{}", std::fs::read_to_string(&path)?);
+            let path = mem.path.as_ref().expect("loaded memory has a path");
+            let text = std::fs::read_to_string(path)?;
+            print!("{text}");
+            print_origin(&mem, text.ends_with('\n'));
             Ok(0)
         }
         None => bail!("no memory with id '{id}'"),
+    }
+}
+
+/// Provenance footer for `show`: turns the opaque frontmatter pointers into a
+/// ready-to-run resume command and a liveness note. Display only — the
+/// transcript file itself is never opened. Without provenance nothing is
+/// printed at all, keeping `show` a byte-identical file dump.
+fn print_origin(mem: &Memory, file_ended_with_newline: bool) {
+    if mem.session.is_none() && mem.transcript.is_none() {
+        return;
+    }
+    // Frontmatter values may come from a hand-edited file: never let control
+    // characters through to the terminal.
+    let clean = |s: &str| -> String {
+        s.chars()
+            .map(|c| if c.is_control() { '?' } else { c })
+            .collect()
+    };
+    if !file_ended_with_newline {
+        println!();
+    }
+    println!("\n---");
+    if let Some(sid) = &mem.session {
+        // A resume argument must never smuggle flags or paths into the
+        // user's shell; ids that fail validation are shown without one.
+        match (mem.source.as_deref(), session::safe_id(sid)) {
+            (Some("claude-code"), Some(sid)) => {
+                println!("Origin: claude-code session {sid} — resume: claude --resume {sid}");
+            }
+            (Some("codex"), Some(sid)) => {
+                println!("Origin: codex session {sid} — resume: codex resume {sid}");
+            }
+            _ => println!("Origin: session {}", clean(sid)),
+        }
+    }
+    if let Some(t) = &mem.transcript {
+        let status = if std::path::Path::new(t).is_file() {
+            "on disk — the raw session log, greppable for exact commands and errors"
+        } else {
+            "no longer on disk — rely on the summary"
+        };
+        println!("Transcript: {} ({status})", clean(t));
     }
 }
 
@@ -449,7 +518,10 @@ fn cmd_dream(mut parser: lexopt::Parser) -> Result<i32> {
     }
     let proj = resolve_project(false, project_opt.as_deref())?;
     let mems = store::load_project_and_global(&proj.slug)?;
-    print!("{}", dream::report(&proj.name, &mems, jiff::Timestamp::now()));
+    print!(
+        "{}",
+        dream::report(&proj.name, &mems, jiff::Timestamp::now())
+    );
     Ok(0)
 }
 

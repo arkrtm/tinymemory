@@ -18,6 +18,8 @@ Step 1 — Compose a session summary in Markdown (aim for under 150 lines) with 
 
 Write the summary in the language the user has been using in this session (日本語のセッションなら日本語で書く).
 
+If exact strings from this session are worth keeping verbatim — the command that finally worked, the precise error message, a hard-to-find path — add one more section, `## Verbatim appendix`, with up to 20 such lines. Summaries paraphrase; this section is where exact wording survives.
+
 Step 2 — Save it EXACTLY like this, using a quoted heredoc. Do not add other flags and do not write the summary to a file:
 
 ```

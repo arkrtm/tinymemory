@@ -39,8 +39,14 @@ pub fn assemble(
         return None;
     }
 
-    let mut sessions: Vec<&Memory> = mems.iter().filter(|m| m.mtype == MemoryType::Session).collect();
-    let mut facts: Vec<&Memory> = mems.iter().filter(|m| m.mtype == MemoryType::Fact).collect();
+    let mut sessions: Vec<&Memory> = mems
+        .iter()
+        .filter(|m| m.mtype == MemoryType::Session)
+        .collect();
+    let mut facts: Vec<&Memory> = mems
+        .iter()
+        .filter(|m| m.mtype == MemoryType::Fact)
+        .collect();
     // Tiebreak equal timestamps by id (descending) so ordering — and therefore
     // the newest-wins dedup — is deterministic even for legacy second-precision
     // files saved within the same second.
@@ -211,6 +217,8 @@ mod tests {
             created: created.parse().unwrap(),
             created_raw: created.into(),
             source: None,
+            session: None,
+            transcript: None,
             body: body.into(),
             path: None,
         }
@@ -224,11 +232,41 @@ mod tests {
     #[test]
     fn facts_first_then_sessions_then_index() {
         let mems = vec![
-            mem("s1", MemoryType::Session, "newest", "body one", "2026-07-29T00:00:00Z"),
-            mem("s2", MemoryType::Session, "older", "body two", "2026-07-28T00:00:00Z"),
-            mem("s3", MemoryType::Session, "oldest", "body three", "2026-07-27T00:00:00Z"),
-            mem("s4", MemoryType::Session, "ancient", "body four", "2026-07-26T00:00:00Z"),
-            mem("f1", MemoryType::Fact, "uses pnpm", "always pnpm, never npm", "2026-07-20T00:00:00Z"),
+            mem(
+                "s1",
+                MemoryType::Session,
+                "newest",
+                "body one",
+                "2026-07-29T00:00:00Z",
+            ),
+            mem(
+                "s2",
+                MemoryType::Session,
+                "older",
+                "body two",
+                "2026-07-28T00:00:00Z",
+            ),
+            mem(
+                "s3",
+                MemoryType::Session,
+                "oldest",
+                "body three",
+                "2026-07-27T00:00:00Z",
+            ),
+            mem(
+                "s4",
+                MemoryType::Session,
+                "ancient",
+                "body four",
+                "2026-07-26T00:00:00Z",
+            ),
+            mem(
+                "f1",
+                MemoryType::Fact,
+                "uses pnpm",
+                "always pnpm, never npm",
+                "2026-07-20T00:00:00Z",
+            ),
         ];
         let out = assemble("proj", &mems, DEFAULT_BUDGET, 3).unwrap().text;
         let facts_pos = out.find("## Facts").unwrap();
@@ -245,8 +283,20 @@ mod tests {
     #[test]
     fn same_title_sessions_dedup_keep_newest() {
         let mems = vec![
-            mem("new", MemoryType::Session, "auth work", "new body", "2026-07-29T00:00:00Z"),
-            mem("old", MemoryType::Session, "auth work", "old body", "2026-07-01T00:00:00Z"),
+            mem(
+                "new",
+                MemoryType::Session,
+                "auth work",
+                "new body",
+                "2026-07-29T00:00:00Z",
+            ),
+            mem(
+                "old",
+                MemoryType::Session,
+                "auth work",
+                "old body",
+                "2026-07-01T00:00:00Z",
+            ),
         ];
         let out = assemble("p", &mems, DEFAULT_BUDGET, 3).unwrap().text;
         assert!(out.contains("new body"));
@@ -258,16 +308,40 @@ mod tests {
         // Re-saving a fact with the same title is the update mechanism: the
         // newest decision wins in recall, the old one disappears from it.
         let mems = vec![
-            mem("old", MemoryType::Fact, "package manager", "use npm", "2026-01-01T00:00:00Z"),
-            mem("new", MemoryType::Fact, "package manager", "use pnpm, never npm", "2026-07-29T00:00:00Z"),
+            mem(
+                "old",
+                MemoryType::Fact,
+                "package manager",
+                "use npm",
+                "2026-01-01T00:00:00Z",
+            ),
+            mem(
+                "new",
+                MemoryType::Fact,
+                "package manager",
+                "use pnpm, never npm",
+                "2026-07-29T00:00:00Z",
+            ),
         ];
         let out = assemble("p", &mems, DEFAULT_BUDGET, 3).unwrap().text;
         assert!(out.contains("use pnpm, never npm"));
         assert!(!out.contains("use npm\n") && !out.contains(": use npm"));
         // Different titles keep coexisting.
         let mems2 = vec![
-            mem("a", MemoryType::Fact, "package manager", "use pnpm", "2026-07-29T00:00:00Z"),
-            mem("b", MemoryType::Fact, "test runner", "use vitest", "2026-01-01T00:00:00Z"),
+            mem(
+                "a",
+                MemoryType::Fact,
+                "package manager",
+                "use pnpm",
+                "2026-07-29T00:00:00Z",
+            ),
+            mem(
+                "b",
+                MemoryType::Fact,
+                "test runner",
+                "use vitest",
+                "2026-01-01T00:00:00Z",
+            ),
         ];
         let out2 = assemble("p", &mems2, DEFAULT_BUDGET, 3).unwrap().text;
         assert!(out2.contains("use pnpm") && out2.contains("use vitest"));
@@ -278,11 +352,41 @@ mod tests {
         // The hook's "loaded N facts + M sessions" message must count distinct
         // titles (what recall actually represents), not raw files on disk.
         let mems = vec![
-            mem("s1", MemoryType::Session, "auth work", "new body", "2026-07-29T00:00:00Z"),
-            mem("s2", MemoryType::Session, "auth work", "old body", "2026-07-01T00:00:00Z"),
-            mem("s3", MemoryType::Session, "other work", "body", "2026-07-02T00:00:00Z"),
-            mem("f1", MemoryType::Fact, "package manager", "pnpm", "2026-07-29T00:00:00Z"),
-            mem("f2", MemoryType::Fact, "package manager", "npm", "2026-01-01T00:00:00Z"),
+            mem(
+                "s1",
+                MemoryType::Session,
+                "auth work",
+                "new body",
+                "2026-07-29T00:00:00Z",
+            ),
+            mem(
+                "s2",
+                MemoryType::Session,
+                "auth work",
+                "old body",
+                "2026-07-01T00:00:00Z",
+            ),
+            mem(
+                "s3",
+                MemoryType::Session,
+                "other work",
+                "body",
+                "2026-07-02T00:00:00Z",
+            ),
+            mem(
+                "f1",
+                MemoryType::Fact,
+                "package manager",
+                "pnpm",
+                "2026-07-29T00:00:00Z",
+            ),
+            mem(
+                "f2",
+                MemoryType::Fact,
+                "package manager",
+                "npm",
+                "2026-01-01T00:00:00Z",
+            ),
         ];
         let r = assemble("p", &mems, DEFAULT_BUDGET, 3).unwrap();
         assert_eq!(r.facts, 1);
@@ -306,7 +410,11 @@ mod tests {
             })
             .collect();
         let r = assemble("p", &mems, 4000, 3).unwrap();
-        assert!(r.facts < 40, "overflow must reduce the count, got {}", r.facts);
+        assert!(
+            r.facts < 40,
+            "overflow must reduce the count, got {}",
+            r.facts
+        );
         let excluded = 40 - r.facts;
         assert!(
             r.text.contains(&format!("…and {excluded} more facts")),
@@ -352,7 +460,11 @@ mod tests {
             .collect();
         let out = assemble("p", &mems, 4000, 3).unwrap().text;
         // Header + index allowance: never balloon past budget + slack.
-        assert!(out.chars().count() < 4000 + 1200, "len={}", out.chars().count());
+        assert!(
+            out.chars().count() < 4000 + 1200,
+            "len={}",
+            out.chars().count()
+        );
         assert!(out.contains("…[truncated"));
     }
 
@@ -386,7 +498,10 @@ mod tests {
             .collect();
         let out = assemble("p", &mems, 4000, 3).unwrap().text;
         // Newest facts render, some overflow as title lines, the rest are counted.
-        assert!(out.contains("more facts"), "hidden-count line present: {out}");
+        assert!(
+            out.contains("more facts"),
+            "hidden-count line present: {out}"
+        );
         assert!(
             out.chars().count() < 4000 + 400,
             "len={}",
@@ -418,10 +533,15 @@ mod tests {
                 &format!("2026-07-{:02}T00:00:00Z", 20 + i),
             ));
         }
-        let out = assemble("p", &mems, DEFAULT_BUDGET, DEFAULT_SESSIONS).unwrap().text;
+        let out = assemble("p", &mems, DEFAULT_BUDGET, DEFAULT_SESSIONS)
+            .unwrap()
+            .text;
         let len = out.chars().count();
         assert!(len < 10_000, "must stay under Claude's cap, got {len}");
-        assert!(len < DEFAULT_BUDGET + 1500, "roughly within budget, got {len}");
+        assert!(
+            len < DEFAULT_BUDGET + 1500,
+            "roughly within budget, got {len}"
+        );
     }
 
     #[test]

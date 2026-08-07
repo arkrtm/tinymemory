@@ -82,7 +82,7 @@ tinymemory init [claude|codex|all] / doctor
 └── _global/                          # user-wide facts & preferences
 ```
 
-Each memory is Markdown with frontmatter (`id`, `type: session|fact`, `title`, `tags`, `created`). Two kinds only:
+Each memory is Markdown with frontmatter (`id`, `type: session|fact`, `title`, `tags`, `created`, `source`, plus opaque provenance pointers `session` / `transcript` when the CLI reveals them). Two kinds only:
 
 - **session** — what happened, decisions, current state, next steps (written by the agent at `/remember`)
 - **fact** — durable knowledge: build commands, invariants, preferences (`--global` for user-wide)
@@ -91,11 +91,13 @@ Each memory is Markdown with frontmatter (`id`, `type: session|fact`, `title`, `
 
 `recall` assembles a budget-limited block: all facts, the 3 most recent session summaries, then a one-line index of older sessions — the agent can `tinymemory search` / `tinymemory show <id>` for anything deeper.
 
+**Provenance.** A summary is lossy by design — exact commands, exact error text, and verbatim requests stay in the CLI's own session transcript. So every save records *which session produced the memory*, when the CLI reveals it: the session id and transcript path the CLIs already expose (Claude Code via the environment and the SessionStart hook, Codex via the hook alone), stored as opaque frontmatter pointers and nothing more. `tinymemory show <id>` turns them into an Origin footer with a ready-to-run resume command (`claude --resume <id>` / `codex resume <id>`) and whether the transcript is still on disk — an agent that needs the exact string can go back to the raw log instead of guessing. The Claude Code link is exact; the Codex link is a best-effort guess (the most recently started session in the project), so concurrent same-project sessions — worktrees share a project — can occasionally stamp a sibling session. The binary never opens or parses a transcript; a dangling pointer just means the CLI cleaned it up. Claude Code does that after 30 days by default — `tinymemory doctor` warns about it; raise `cleanupPeriodDays` in `~/.claude/settings.json` to keep raw history longer. (The pointer plumbing lives in tiny `state/sessions/*.json` files inside `~/.tinymemory`, pruned after 7 days — working state, not memories.)
+
 ## Design constraints (what this tool will not do)
 
 - No background processes, ports, or state outside `~/.tinymemory`
 - No LLM API calls — summaries are written by the agent inside your session
-- No transcript parsing — both CLIs mark their session files as internal formats
+- No transcript parsing — both CLIs mark their session files as internal formats. Memories may *point at* a transcript (an id and a path recorded at save time), but the binary never opens one
 - No vector search — at memory scale (thousands of entries), scored substring scan over Markdown is single-digit milliseconds and beats trigram indexes for short Japanese words
 
 Claude Code's auto-memory and Codex's native memories are per-tool. tinymemory's niche is the **shared, transparent** store: one set of files both agents read and write, which you can inspect and edit.

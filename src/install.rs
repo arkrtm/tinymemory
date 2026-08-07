@@ -48,10 +48,15 @@ pub fn init(which: &str) -> Result<()> {
             if added { "added" } else { "already installed" }
         );
         for name in SKILL_NAMES {
-            link_skill(&skills_root.join(name), &home.join(".claude").join("skills").join(name))?;
+            link_skill(
+                &skills_root.join(name),
+                &home.join(".claude").join("skills").join(name),
+            )?;
         }
         println!("  skills: ~/.claude/skills/{{remember,recall,dream}}");
-        println!("  Tip   : plugin install is an alternative: /plugin marketplace add arkrtm/tinymemory");
+        println!(
+            "  Tip   : plugin install is an alternative: /plugin marketplace add arkrtm/tinymemory"
+        );
     }
 
     if codex {
@@ -64,7 +69,10 @@ pub fn init(which: &str) -> Result<()> {
             if added { "added" } else { "already installed" }
         );
         for name in SKILL_NAMES {
-            link_skill(&skills_root.join(name), &home.join(".agents").join("skills").join(name))?;
+            link_skill(
+                &skills_root.join(name),
+                &home.join(".agents").join("skills").join(name),
+            )?;
         }
         println!("  skills: ~/.agents/skills/{{remember,recall,dream}}");
         println!("  Action needed: start codex and approve the tinymemory hook once (trust review, `/hooks`).");
@@ -102,8 +110,8 @@ fn codex_hook_entry() -> serde_json::Value {
 fn merge_hook(path: &Path, entry: serde_json::Value) -> Result<bool> {
     let existed = path.exists();
     let mut root: serde_json::Value = if existed {
-        let text = fs::read_to_string(path)
-            .with_context(|| format!("cannot read {}", path.display()))?;
+        let text =
+            fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
         serde_json::from_str(&text).with_context(|| {
             format!(
                 "{} is not valid JSON — fix it or add the hook manually",
@@ -134,7 +142,10 @@ fn merge_hook(path: &Path, entry: serde_json::Value) -> Result<bool> {
         bail!("'hooks.SessionStart' in {} is not an array", path.display());
     };
 
-    if serde_json::to_string(&arr).unwrap_or_default().contains(MARKER) {
+    if serde_json::to_string(&arr)
+        .unwrap_or_default()
+        .contains(MARKER)
+    {
         return Ok(false);
     }
     arr.push(entry);
@@ -158,7 +169,10 @@ fn materialize_skills() -> Result<PathBuf> {
     let remember = root.join("remember");
     fs::create_dir_all(remember.join("agents"))?;
     fs::write(remember.join("SKILL.md"), SKILL_REMEMBER)?;
-    fs::write(remember.join("agents").join("openai.yaml"), SKILL_REMEMBER_OPENAI)?;
+    fs::write(
+        remember.join("agents").join("openai.yaml"),
+        SKILL_REMEMBER_OPENAI,
+    )?;
     let recall = root.join("recall");
     fs::create_dir_all(&recall)?;
     fs::write(recall.join("SKILL.md"), SKILL_RECALL)?;
@@ -184,7 +198,10 @@ fn link_skill(target: &Path, link: &Path) -> Result<()> {
         return Ok(());
     }
     if link.exists() {
-        eprintln!("  warn  : {} already exists, leaving it alone", link.display());
+        eprintln!(
+            "  warn  : {} already exists, leaving it alone",
+            link.display()
+        );
         return Ok(());
     }
     if let Some(parent) = link.parent() {
@@ -234,12 +251,21 @@ pub fn doctor() -> Result<()> {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    println!("git   : {}", if git_ok { "found" } else { "NOT FOUND — projects fall back to path-hash identity" });
+    println!(
+        "git   : {}",
+        if git_ok {
+            "found"
+        } else {
+            "NOT FOUND — projects fall back to path-hash identity"
+        }
+    );
 
     if let Ok(cwd) = std::env::current_dir() {
         let proj = project::resolve(&cwd, None);
         let count = store::load_slug(&proj.slug).map(|m| m.len()).unwrap_or(0);
-        let global = store::load_slug(store::GLOBAL_SLUG).map(|m| m.len()).unwrap_or(0);
+        let global = store::load_slug(store::GLOBAL_SLUG)
+            .map(|m| m.len())
+            .unwrap_or(0);
         println!(
             "cwd   : project '{}' → {} [{}], {} memories (+{} global)",
             proj.name, proj.slug, proj.how, count, global
@@ -289,7 +315,36 @@ pub fn doctor() -> Result<()> {
     let present = codex_skill.exists();
     check("codex skill ", codex_skill, present);
     if codex_hook {
-        println!("        reminder: Codex runs hooks only after a one-time trust review (`/hooks`)");
+        println!(
+            "        reminder: Codex runs hooks only after a one-time trust review (`/hooks`)"
+        );
+    }
+
+    // Transcript retention: memories carry opaque `transcript:` pointers to
+    // the CLI's own session logs, and Claude Code deletes those after
+    // `cleanupPeriodDays` — DEFAULT 30, which applies exactly when the
+    // setting (or the whole settings file) is absent, so those cases must
+    // warn too. Best-effort read of user settings — a hint, not a guarantee
+    // (managed/env settings can override it). Skipped entirely when Claude
+    // Code itself is absent.
+    if home.join(".claude").exists() {
+        let settings = fs::read_to_string(home.join(".claude").join("settings.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+        let value = settings.as_ref().and_then(|v| v.get("cleanupPeriodDays"));
+        let warn = |d: u64, how: &str| {
+            println!(
+                "transcripts : Claude Code deletes session transcripts after {d} days ({how}) — memories' `transcript:` pointers expire with them; raise cleanupPeriodDays in ~/.claude/settings.json to keep raw session history longer"
+            );
+        };
+        match value.map(|d| d.as_u64()) {
+            Some(Some(d)) if d >= 90 => {
+                println!("transcripts : Claude Code keeps session transcripts {d} days (cleanupPeriodDays: ok)");
+            }
+            Some(Some(d)) => warn(d, "cleanupPeriodDays"),
+            Some(None) => warn(30, "cleanupPeriodDays unrecognized — assuming the default"),
+            None => warn(30, "default"),
+        }
     }
 
     if !writable {

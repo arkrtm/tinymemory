@@ -123,6 +123,8 @@ mod tests {
             created: created.parse().unwrap(),
             created_raw: created.into(),
             source: None,
+            session: None,
+            transcript: None,
             body: body.into(),
             path: None,
         }
@@ -131,8 +133,20 @@ mod tests {
     #[test]
     fn finds_two_char_kanji() {
         let mems = vec![
-            mem("a", "経費精算", "人事システムの経費精算フローを修正", &[], "2026-07-01T00:00:00Z"),
-            mem("b", "unrelated", "nothing here", &[], "2026-07-01T00:00:00Z"),
+            mem(
+                "a",
+                "経費精算",
+                "人事システムの経費精算フローを修正",
+                &[],
+                "2026-07-01T00:00:00Z",
+            ),
+            mem(
+                "b",
+                "unrelated",
+                "nothing here",
+                &[],
+                "2026-07-01T00:00:00Z",
+            ),
         ];
         let hits = search(&mems, "人事", "2026-07-02T00:00:00Z".parse().unwrap(), 10);
         assert_eq!(hits.len(), 1);
@@ -143,8 +157,20 @@ mod tests {
     #[test]
     fn title_and_tags_outrank_body() {
         let mems = vec![
-            mem("body-only", "x", "auth auth auth auth", &[], "2026-07-01T00:00:00Z"),
-            mem("in-title", "auth refactor", "nothing", &[], "2026-07-01T00:00:00Z"),
+            mem(
+                "body-only",
+                "x",
+                "auth auth auth auth",
+                &[],
+                "2026-07-01T00:00:00Z",
+            ),
+            mem(
+                "in-title",
+                "auth refactor",
+                "nothing",
+                &[],
+                "2026-07-01T00:00:00Z",
+            ),
             mem("in-tags", "x", "nothing", &["auth"], "2026-07-01T00:00:00Z"),
         ];
         let hits = search(&mems, "auth", "2026-07-02T00:00:00Z".parse().unwrap(), 10);
@@ -171,7 +197,12 @@ mod tests {
             mem("both", "Auth DB", "", &[], "2026-07-01T00:00:00Z"),
             mem("one", "Auth only", "", &[], "2026-07-01T00:00:00Z"),
         ];
-        let hits = search(&mems, "auth db", "2026-07-02T00:00:00Z".parse().unwrap(), 10);
+        let hits = search(
+            &mems,
+            "auth db",
+            "2026-07-02T00:00:00Z".parse().unwrap(),
+            10,
+        );
         assert_eq!(hits[0].memory.id, "both");
         assert_eq!(hits.len(), 2); // OR semantics: partial match still listed
     }
