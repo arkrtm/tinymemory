@@ -27,6 +27,12 @@ tinymemory init          # Claude Code / Codex 両方のフックとスキルを
 
 片方だけなら `tinymemory init claude` / `tinymemory init codex`。結果は `tinymemory doctor` で確認できます。
 
+ビルド済みバイナリ（Rust 環境不要）を各 [GitHub Release](https://github.com/arkrtm/tinymemory/releases) に添付しています: macOS（arm64 / x86_64）と Linux の静的バイナリ（x86_64 / arm64、musl のため glibc のバージョンを問わない）。[mise](https://mise.jdx.dev) なら:
+
+```sh
+mise use -g github:arkrtm/tinymemory
+```
+
 Claude Code はプラグインとして入れることもできます:
 
 ```

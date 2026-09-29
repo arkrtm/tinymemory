@@ -80,12 +80,12 @@ fn run_in_env(
     let mut child = cmd.spawn().expect("spawn tinymemory");
     if let Some(input) = stdin {
         use std::io::Write;
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(input.as_bytes())
-            .unwrap();
+        // The child may legitimately exit without reading stdin (e.g. the hook
+        // bailing out early), so a broken pipe here is not a test failure.
+        match child.stdin.take().unwrap().write_all(input.as_bytes()) {
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+            r => r.unwrap(),
+        }
     }
     let out = child.wait_with_output().unwrap();
     Output {
