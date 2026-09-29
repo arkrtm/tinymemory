@@ -1,6 +1,6 @@
 [package]
 name = "tinymemory"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.85"
 description = "Tiny, fast, local long-term memory for coding agents (Claude Code & Codex CLI). One binary, plain Markdown files, no daemon."
