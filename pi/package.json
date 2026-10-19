@@ -1,0 +1,23 @@
+{
+  "name": "pi-tinymemory",
+  "version": "0.1.0",
+  "description": "Tiny, fast, local long-term memory for the Pi coding agent. Memories saved by past sessions auto-load at session start. One Rust binary + plain Markdown files — no daemon, no DB, no MCP, no API keys.",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "memory",
+    "tinymemory"
+  ],
+  "author": "arkrtm",
+  "license": "MIT",
+  "homepage": "https://github.com/arkrtm/tinymemory",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arkrtm/tinymemory.git",
+    "directory": "pi"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
