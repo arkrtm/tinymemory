@@ -1896,3 +1896,119 @@ fn hook_survives_unwritable_state_dir() {
     // The failed provenance write degrades silently: no state dir appears.
     assert!(!home.join("state").exists());
 }
+
+#[test]
+fn delete_rejects_drive_prefixed_id() {
+    let home = tmpdir("drive-id");
+    run(
+        &home,
+        &["save", "--project", "t", "--title", "x"],
+        Some("body\n"),
+    );
+    // A victim in the cwd the command runs in. On Windows `C:name` is a
+    // drive-relative path, and joining it onto the store path would replace
+    // the store path entirely.
+    let cwd = tmpdir("drive-id-cwd");
+    let victim = cwd.join("victim.md");
+    fs::write(&victim, "---\nid: victim\ntitle: v\n---\nsecret\n").unwrap();
+    let drive = cwd
+        .to_string_lossy()
+        .chars()
+        .next()
+        .filter(|_| cfg!(windows))
+        .unwrap_or('C');
+    let id = format!("{drive}:victim");
+    let show = run_in(&home, &cwd, &["show", &id], None);
+    assert_eq!(show.code, 1);
+    assert!(!show.stdout.contains("secret"));
+    let del = run_in(&home, &cwd, &["delete", &id], None);
+    assert_eq!(del.code, 1, "{}", del.stderr);
+    assert!(victim.exists(), "file outside the store must survive");
+}
+
+#[test]
+fn colon_id_never_matches_store_file() {
+    let home = tmpdir("colon-id");
+    let slug_dir = home.join("memories").join("t");
+    fs::create_dir_all(&slug_dir).unwrap();
+    // Only creatable where ':' is legal in file names (joining it would
+    // escape the directory on Windows); skip there.
+    if cfg!(windows) {
+        return;
+    }
+    let file = slug_dir.join("C:notes.md");
+    if fs::write(&file, "---\nid: x\ntitle: v\n---\nsecret\n").is_err() {
+        return;
+    }
+    let show = run(&home, &["show", "C:notes"], None);
+    assert_eq!(show.code, 1);
+    assert!(file.exists());
+}
+
+#[test]
+fn init_links_skills_with_relative_store_home() {
+    let fake_home = tmpdir("rel-home");
+    let out = Command::new(bin())
+        .args(["init", "claude"])
+        .env("HOME", &fake_home)
+        .env("TINYMEMORY_HOME", "store")
+        .current_dir(&fake_home)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let link = fake_home.join(".claude/skills/remember");
+    if let Ok(target) = fs::read_link(&link) {
+        assert!(
+            target.is_absolute(),
+            "link target must be absolute: {target:?}"
+        );
+    }
+    assert!(
+        link.join("SKILL.md").is_file(),
+        "SKILL.md must be readable through the link"
+    );
+}
+
+#[test]
+fn userprofile_is_the_home_fallback() {
+    let profile = tmpdir("userprofile");
+    let mut cmd = Command::new(bin());
+    cmd.args(["init", "all"])
+        .env_remove("HOME")
+        .env_remove("TINYMEMORY_HOME")
+        .env("USERPROFILE", &profile)
+        .current_dir(std::env::temp_dir());
+    let out = cmd.output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(profile
+        .join(".tinymemory/skills/remember/SKILL.md")
+        .is_file());
+    assert!(profile.join(".claude/settings.json").is_file());
+    assert!(profile.join(".codex/hooks.json").is_file());
+
+    let save = Command::new(bin())
+        .args(["save", "--project", "t", "--title", "x"])
+        .env_remove("HOME")
+        .env_remove("TINYMEMORY_HOME")
+        .env("USERPROFILE", &profile)
+        .current_dir(std::env::temp_dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .and_then(|mut c| {
+            use std::io::Write;
+            c.stdin.take().unwrap().write_all(b"body\n")?;
+            c.wait_with_output()
+        })
+        .unwrap();
+    assert!(save.status.success());
+    assert!(profile.join(".tinymemory/memories/t").is_dir());
+}

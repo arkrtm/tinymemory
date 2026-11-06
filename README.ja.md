@@ -52,6 +52,11 @@ Claude Code はプラグインとして入れることもできます:
   writable_roots = ["/Users/you/.tinymemory"]
   ```
 
+**ネイティブ Windows:**
+- Claude Code はフックを Git Bash で実行するので、必要なのは Git for Windows だけです。
+- Codex はフックのコマンドをセッションのシェル(PowerShell)で実行するため、`sh -c` のフックは動きません。そこで `tinymemory init codex` は `~/.codex/hooks.json` に PowerShell の `commandWindows` も書き込みます(Codex は Windows でだけこれを使います)。この対応より前に Codex のフックを入れた場合や、プラグイン経由(フックに上書きが無い)の場合は、`sh` を PATH に通す(例: Git の `usr\bin`)か、`hooks.json` から tinymemory のエントリを削除して `tinymemory init codex` をやり直してください。動かない Codex のフックは `tinymemory doctor` が `ok` ではなく警告として報告します。
+- `writable_roots` のパスは、バックスラッシュをエスケープした TOML 文字列(`"C:\\Users\\you\\.tinymemory"`)で書きます。`init` はその形で出力します。
+
 ## 使い方
 
 | セッション内 | 何が起きるか |

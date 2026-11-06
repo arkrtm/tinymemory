@@ -239,14 +239,28 @@ fn parse_one(path: &Path) -> Option<Memory> {
     }
 }
 
+/// An id is a single plain file-name component on every platform.
+fn is_plain_id(id: &str) -> bool {
+    if id.is_empty() || id.starts_with('.') || id.contains(['/', '\\', ':']) {
+        return false;
+    }
+    let mut components = Path::new(id).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    )
+}
+
 /// Find a memory by id across all project directories.
 pub fn find_by_id(id: &str) -> Result<Option<Memory>> {
     // Generated ids are `YYYYMMDD-HHMMSS-xxxx` and filename-derived ids come
     // from Path::file_stem(), so a valid id never contains a path separator.
     // Reject anything else: joining an id like `../../../note` would escape the
     // store, and joining an absolute path would replace the base entirely —
-    // turning `show`/`delete` into arbitrary-file read/delete primitives.
-    if id.is_empty() || id.contains(['/', '\\']) || id.starts_with('.') {
+    // turning `show`/`delete` into arbitrary-file read/delete primitives. A `:`
+    // is rejected too: on Windows `C:name` is a drive-relative path that
+    // replaces the base on join.
+    if !is_plain_id(id) {
         return Ok(None);
     }
     let dir = memories_dir()?;

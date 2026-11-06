@@ -10,6 +10,10 @@ use crate::{project, store};
 /// Never edit it; put new behavior behind `tinymemory hook session-start`.
 pub const FROZEN_CMD: &str = "sh -c 'PATH=\"$PATH:$HOME/.local/bin:$HOME/.cargo/bin\"; command -v tinymemory >/dev/null 2>&1 && exec tinymemory hook session-start; exit 0'";
 
+/// The Codex-on-Windows hook command (`commandWindows`), run by PowerShell.
+/// FROZEN ABI for the same reason as `FROZEN_CMD`: never edit it.
+pub const FROZEN_CMD_WINDOWS: &str = r#"$env:Path += ";$HOME\.local\bin;$HOME\.cargo\bin"; if (Get-Command tinymemory -ErrorAction SilentlyContinue) { tinymemory hook session-start }; exit 0"#;
+
 /// Substring used to detect an already-installed hook (idempotency).
 const MARKER: &str = "tinymemory hook session-start";
 
@@ -76,11 +80,22 @@ pub fn init(which: &str) -> Result<()> {
         println!("  Action needed: start codex and approve the tinymemory hook once (trust review, `/hooks`).");
         println!("  Optional — let the agent save without an approval prompt by adding to ~/.codex/config.toml:");
         println!("      [sandbox_workspace_write]");
-        println!("      writable_roots = [\"{}\"]", store::home()?.display());
+        println!(
+            "      {}",
+            writable_roots_line(&std::path::absolute(store::home()?)?)
+        );
     }
 
     println!("\nDone. Save with /remember (Codex: $remember); memories auto-load on session start and after /clear.");
     Ok(())
+}
+
+/// `writable_roots = ["<path>"]` as a TOML line. A JSON string is a valid TOML
+/// basic string (same `\\`, `\"` and control-character escapes), which keeps
+/// Windows backslashes from being read as escape sequences.
+fn writable_roots_line(path: &Path) -> String {
+    let quoted = serde_json::to_string(&path.to_string_lossy()).unwrap_or_default();
+    format!("writable_roots = [{quoted}]")
 }
 
 fn claude_hook_entry() -> serde_json::Value {
@@ -91,7 +106,14 @@ fn claude_hook_entry() -> serde_json::Value {
 }
 
 fn codex_hook_entry() -> serde_json::Value {
-    serde_json::json!({
+    codex_hook_entry_for(cfg!(windows))
+}
+
+/// On Windows, Codex runs hook commands through the session shell (PowerShell),
+/// where the `sh -c` command cannot run, and uses `commandWindows` in its place.
+/// Other platforms keep the entry unchanged.
+fn codex_hook_entry_for(windows: bool) -> serde_json::Value {
+    let mut entry = serde_json::json!({
         "matcher": "startup|clear",
         "hooks": [{
             "type": "command",
@@ -99,7 +121,11 @@ fn codex_hook_entry() -> serde_json::Value {
             "additionalContextLimit": 8000,
             "statusMessage": "Loading tinymemory"
         }]
-    })
+    });
+    if windows {
+        entry["hooks"][0]["commandWindows"] = FROZEN_CMD_WINDOWS.into();
+    }
+    entry
 }
 
 /// Merge a SessionStart entry into a hooks/settings JSON file. Idempotent
@@ -184,6 +210,9 @@ fn materialize_skills() -> Result<PathBuf> {
 /// Symlink `link` -> `target`. Idempotent; refuses to replace anything we do
 /// not manage.
 fn link_skill(target: &Path, link: &Path) -> Result<()> {
+    // A relative target would resolve from the link's directory, not the cwd.
+    let target = std::path::absolute(target)?;
+    let target = target.as_path();
     if let Ok(existing) = fs::read_link(link) {
         if existing == target {
             return Ok(());
@@ -232,6 +261,42 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Whether an executable `sh` is on PATH.
+fn sh_on_path() -> bool {
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path)
+            .any(|dir| dir.join("sh.exe").is_file() || dir.join("sh").is_file())
+    })
+}
+
+/// Why the installed Codex hook cannot run on this platform, if it cannot.
+/// On Windows Codex runs the hook through PowerShell, so the `sh -c` command
+/// needs `sh` on PATH unless the entry carries a `commandWindows` override.
+fn codex_hook_problem(hooks_json: &str, windows: bool, sh_found: bool) -> Option<&'static str> {
+    if !windows || sh_found {
+        return None;
+    }
+    let has_override = serde_json::from_str::<serde_json::Value>(hooks_json)
+        .ok()
+        .and_then(|v| v["hooks"]["SessionStart"].as_array().cloned())
+        .is_some_and(|groups| {
+            groups
+                .iter()
+                .filter_map(|g| g["hooks"].as_array())
+                .flatten()
+                .any(|h| {
+                    h["commandWindows"]
+                        .as_str()
+                        .is_some_and(|c| c.contains(MARKER))
+                })
+        });
+    if has_override {
+        None
+    } else {
+        Some("`sh` is not on PATH and the entry has no `commandWindows` override; put Git's usr\\bin on PATH, or remove the tinymemory entry from hooks.json and re-run `tinymemory init codex` (see README, Windows)")
+    }
 }
 
 pub fn doctor() -> Result<()> {
@@ -314,7 +379,19 @@ pub fn doctor() -> Result<()> {
     let codex_hook = fs::read_to_string(&codex_hooks)
         .map(|s| s.contains(MARKER))
         .unwrap_or(false);
-    check("codex hook  ", codex_hooks, codex_hook);
+    let codex_problem = if codex_hook {
+        let text = fs::read_to_string(&codex_hooks).unwrap_or_default();
+        codex_hook_problem(&text, cfg!(windows), sh_on_path())
+    } else {
+        None
+    };
+    match codex_problem {
+        Some(problem) => println!(
+            "codex hook  : {} (installed, but WILL NOT RUN: {problem})",
+            codex_hooks.display()
+        ),
+        None => check("codex hook  ", codex_hooks, codex_hook),
+    }
     let codex_skill = home.join(".agents").join("skills").join("remember");
     let present = codex_skill.exists();
     check("codex skill ", codex_skill, present);
@@ -394,5 +471,59 @@ mod tests {
                 "startup|clear"
             );
         }
+    }
+
+    #[test]
+    fn codex_entry_gets_windows_override_only_on_windows() {
+        let unix = codex_hook_entry_for(false);
+        assert!(unix["hooks"][0].get("commandWindows").is_none());
+        assert_eq!(unix["hooks"][0]["command"].as_str().unwrap(), FROZEN_CMD);
+        let win = codex_hook_entry_for(true);
+        assert_eq!(win["hooks"][0]["command"].as_str().unwrap(), FROZEN_CMD);
+        assert_eq!(
+            win["hooks"][0]["commandWindows"].as_str().unwrap(),
+            FROZEN_CMD_WINDOWS
+        );
+        assert!(FROZEN_CMD_WINDOWS.contains(MARKER));
+        // Everything except the override is identical.
+        let mut stripped = win.clone();
+        stripped["hooks"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("commandWindows");
+        assert_eq!(stripped, unix);
+    }
+
+    #[test]
+    fn doctor_flags_codex_hook_that_cannot_run_on_windows() {
+        let plain = serde_json::json!({"hooks": {"SessionStart": [codex_hook_entry_for(false)]}})
+            .to_string();
+        let with_override =
+            serde_json::json!({"hooks": {"SessionStart": [codex_hook_entry_for(true)]}})
+                .to_string();
+        assert!(codex_hook_problem(&plain, true, false).is_some());
+        assert!(codex_hook_problem(&plain, true, true).is_none());
+        assert!(codex_hook_problem(&with_override, true, false).is_none());
+        assert!(codex_hook_problem(&plain, false, false).is_none());
+        assert!(codex_hook_problem("not json", true, false).is_some());
+    }
+
+    #[test]
+    fn writable_roots_line_is_valid_toml_for_windows_paths() {
+        let path = Path::new(r#"C:\Users\a b\.tinymemory"#);
+        let line = writable_roots_line(path);
+        assert_eq!(
+            line,
+            "writable_roots = [\"C:\\\\Users\\\\a b\\\\.tinymemory\"]"
+        );
+        // A TOML basic string decodes like JSON: round-trips to the original.
+        let inner = line
+            .strip_prefix("writable_roots = [")
+            .and_then(|s| s.strip_suffix(']'))
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<String>(inner).unwrap(),
+            path.to_str().unwrap()
+        );
     }
 }

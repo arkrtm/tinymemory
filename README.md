@@ -52,6 +52,11 @@ Claude Code users can install the skills/hooks as a plugin instead:
   writable_roots = ["/Users/you/.tinymemory"]
   ```
 
+**Native Windows:**
+- Claude Code runs the hook with Git Bash, so Git for Windows is the only requirement.
+- Codex runs hook commands through the session shell (PowerShell), where the `sh -c` hook command cannot run. `tinymemory init codex` therefore also writes a `commandWindows` PowerShell command into `~/.codex/hooks.json`, which Codex uses on Windows only. If you installed the Codex hook before this existed, or through the plugin (whose hook has no override), either put `sh` on PATH (for example Git's `usr\bin`) or remove the tinymemory entry from `hooks.json` and re-run `tinymemory init codex`. `tinymemory doctor` reports a Codex hook that cannot run instead of `ok`.
+- In `writable_roots`, write the path as a TOML string with escaped backslashes (`"C:\\Users\\you\\.tinymemory"`); `init` prints it that way.
+
 ## Use
 
 | In the session | What happens |
