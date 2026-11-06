@@ -27,7 +27,7 @@ tinymemory init          # sets up hooks + skills for Claude Code and Codex
 
 `tinymemory init claude` / `tinymemory init codex` installs one side only. Check the result with `tinymemory doctor`.
 
-Prebuilt binaries (no Rust toolchain needed) are attached to each [GitHub Release](https://github.com/arkrtm/tinymemory/releases): macOS (arm64 / x86_64) and static Linux builds (x86_64 / arm64, musl — any glibc). With [mise](https://mise.jdx.dev):
+Prebuilt binaries (no Rust toolchain needed) are attached to each [GitHub Release](https://github.com/arkrtm/tinymemory/releases): macOS (arm64 / x86_64), static Linux builds (x86_64 / arm64, musl — any glibc) and Windows (x86_64). With [mise](https://mise.jdx.dev):
 
 ```sh
 mise use -g github:arkrtm/tinymemory

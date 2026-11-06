@@ -1319,9 +1319,11 @@ fn hook_records_state_and_save_links_claude_provenance() {
         "{}",
         show.stdout
     );
+    // Windows paths contain ':' (C:\...), so the frontmatter JSON-quotes them.
+    let t = transcript.display().to_string();
+    let expected = if t.contains(':') { json_string(&t) } else { t };
     assert!(
-        show.stdout
-            .contains(&format!("transcript: {}", transcript.display())),
+        show.stdout.contains(&format!("transcript: {expected}")),
         "{}",
         show.stdout
     );

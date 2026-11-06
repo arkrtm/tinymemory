@@ -22,9 +22,7 @@ const SKILL_DREAM_OPENAI: &str = include_str!("../plugin/skills/dream/agents/ope
 const SKILL_NAMES: [&str; 3] = ["remember", "recall", "dream"];
 
 fn home_dir() -> Result<PathBuf> {
-    Ok(PathBuf::from(
-        std::env::var_os("HOME").context("HOME is not set")?,
-    ))
+    store::user_home()
 }
 
 pub fn init(which: &str) -> Result<()> {
@@ -210,7 +208,13 @@ fn link_skill(target: &Path, link: &Path) -> Result<()> {
     #[cfg(unix)]
     std::os::unix::fs::symlink(target, link)
         .with_context(|| format!("cannot symlink {}", link.display()))?;
-    #[cfg(not(unix))]
+    // Directory symlinks need Developer Mode or admin on Windows; without
+    // them, fall back to a copy (refreshed only by deleting it and re-running).
+    #[cfg(windows)]
+    if std::os::windows::fs::symlink_dir(target, link).is_err() {
+        copy_dir(target, link)?;
+    }
+    #[cfg(not(any(unix, windows)))]
     copy_dir(target, link)?;
     Ok(())
 }

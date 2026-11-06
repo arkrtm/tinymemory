@@ -16,8 +16,16 @@ pub fn home() -> Result<PathBuf> {
             return Ok(PathBuf::from(h));
         }
     }
-    let home = std::env::var_os("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home).join(".tinymemory"))
+    Ok(user_home()?.join(".tinymemory"))
+}
+
+/// The user's home: $HOME, else %USERPROFILE% (native Windows shells such as
+/// PowerShell and cmd do not set HOME; Git Bash does).
+pub fn user_home() -> Result<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .context("HOME is not set")
 }
 
 pub fn memories_dir() -> Result<PathBuf> {

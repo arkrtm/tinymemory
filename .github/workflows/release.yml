@@ -32,6 +32,8 @@ jobs:
             os: macos-latest
           - target: x86_64-apple-darwin
             os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +53,7 @@ jobs:
         run: cargo test --release --locked --target ${{ matrix.target }}
 
       - name: Package and upload
+        if: runner.os != 'Windows'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -60,3 +63,17 @@ jobs:
           tar czf "$name.tar.gz" "$name"
           shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
           gh release upload "$GITHUB_REF_NAME" "$name.tar.gz" "$name.tar.gz.sha256" --repo "$GITHUB_REPOSITORY"
+
+      - name: Package and upload (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $name = "tinymemory-${{ matrix.target }}"
+          New-Item -ItemType Directory $name | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/tinymemory.exe", LICENSE, README.md $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 "$name.zip").Hash.ToLower()
+          [IO.File]::WriteAllText("$name.zip.sha256", "$hash  $name.zip`n")
+          gh release upload "$env:GITHUB_REF_NAME" "$name.zip" "$name.zip.sha256" --repo "$env:GITHUB_REPOSITORY"
